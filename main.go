@@ -42,10 +42,10 @@ Options:
 	switch cmd := args[0]; cmd {
 	case "check":
 		nl := ii.OpenNL(*db_opt)
+		now := time.Now().Unix()
 		for idx, val := range(nl.Nodes) {
 			if val.Masked && !*acheck_opt {continue}
 			if val.Exclude {continue}
-			now := time.Now().Unix()
 			if ii.CheckII(val.Url) {
 				nl.Nodes[idx].LastEx = now
 				nl.Nodes[idx].Masked = false
@@ -76,51 +76,59 @@ Options:
 	case "sync":
 		nl := ii.OpenNL(*db_opt)
 		nls := make(map[string]ii.NodeT, 10)
-		ks := []string{}
-		for _, val := range(nl.Nodes) {
-			ks = append(ks, val.Url)
-			if val.Exclude && !*acheck_opt {continue}
-			code, answ := ii.Getre(fmt.Sprintf("%s/nodes.txt", strings.TrimSuffix(val.Url, "/")), 2000)
-			if code != 200 {continue}
-			if !strings.Contains(answ[0], "\t") {continue}
-			for _, elem := range(answ) {
-				ns := ii.Parse(elem)
-				tmp, ok := nls[ns.Url]
-				if !ok {
-					nls[ns.Url] = ns
-				} else {
-					if ns.LastEx > tmp.LastEx {
-						tmp.LastEx = ns.LastEx
-						nls[ns.Url] = tmp
+		ks := []string{} // список url  из nodes.txt
+		change := false // признак изменений в списке
+		now := time.Now().Unix()
+		var gtime int64 = 0
+		for _, val := range(nl.Nodes) { // обходит список станций из nodes.txt
+			ks = append(ks, val.Url)   //  добавление url станции в общий список
+			if val.Exclude && !*acheck_opt {continue} // если станция в исключении и не установлена опция -a, пропускаем цикл
+			code, answ := ii.Getre(fmt.Sprintf("%s/nodes.txt", strings.TrimSuffix(val.Url, "/")), 2000) // пытаемся скачать nodes.txt с очередной станции
+			if code != 200 {continue} // если ошибка пропускаем цикл
+			if !strings.Contains(answ[0], "\t") {continue} // если в первой строке нет разделителя полей tab, значит формат не правильный, пропускаем цикл
+			for _, elem := range(answ) { // обходим список инстансов в nodes.txt станции
+				ns := ii.Parse(elem) // заполняем структуру информации о ноде
+				tmp, ok := nls[ns.Url] // проверяем что этот инстанс у нас уже есть
+				if !ok { // если нет,
+					nls[ns.Url] = ns // добавляем в общий список
+				} else { // если есть,
+					if ns.LastEx > tmp.LastEx { // проверяем что время последней проверки из nodes.txt станции больше чем сохранённое у нас в общем списке
+						tmp.LastEx = ns.LastEx // обновляем поле структуры
+						nls[ns.Url] = tmp // записываем изменения в общий список
 					}
 				}
 			}
 		}
-		for idx, val := range(ks) {
-			tmp, ok := nls[val]
-			if ok {
-				change := false
-				if tmp.LastEx > nl.Nodes[idx].LastEx {
-					change = true
-				} else if nl.Nodes[idx].LastEx - tmp.LastEx < 604800 {
-					change = true
+		for idx, val := range(ks) { // проходим по списку адресов станций нашей базы
+			tmp, ok := nls[val] // загружаем структуру для работы
+			if ok { // проверка что по данному ключу есть данные
+				change = false // устанавливаем признак изменений в выкл
+				if tmp.LastEx > nl.Nodes[idx].LastEx { // если время последнего обновления в nodes.txt больше чем у нас в базе
+					change = true // устанавливаем признак изменений во вкл
+					gtime = tmp.LastEx // запоминаем время изменения
+				} else if nl.Nodes[idx].LastEx - tmp.LastEx < 604800 { // если у нас в базе время обновления больше чем в общем списке, но разница меньше чем 7 суток
+					change = true // устанавливаем признак изменений во вкл
+					gtime = nl.Nodes[idx].LastEx // запоминаем время изменения
 				}
-				if *ignore_opt {change = true}
-				if change {
-					nl.Nodes[idx].AltPath = true
-					nl.Nodes[idx].Masked = false
+				if *ignore_opt {change = true} // если установлена опция -a, устанавливаем признак изменений во вкл
+				if now - gtime > 604800 { // если самое больше время старше чем текущее время на неделю, то
+					change = false // устанавливаем признак изменений в выкл
 				}
-				delete(nls, val)
+				if change { // если признак изменений вкл
+					nl.Nodes[idx].AltPath = true // устанавливаем признак того что инстанс есть в списках друх станций
+					nl.Nodes[idx].Masked = false // делаем инстанс видимым в нашей базе
+				}
+				delete(nls, val) // удаляем инстанс из общего списка, потому что он уже есть в нашей базе
 			}
 		}
-		for _, val := range(nls) {
-			if *skip_opt {
-				nl.Nodes = append(nl.Nodes, val)
-			} else if ii.CheckII(val.Url){
-				nl.Nodes = append(nl.Nodes, val)
+		for _, val := range(nls) { //проходим по оставшемуся списку инстансов
+			if *skip_opt { // если включена опция -s,
+				nl.Nodes = append(nl.Nodes, val) // то пропускаем проверку на ii-шность, и добавляем инстанс из общего списка в базу
+			} else if ii.CheckII(val.Url){ // в противном случае, проверяем что инстанс является станцией ii, тогда
+				nl.Nodes = append(nl.Nodes, val) // добавляем инстанс из общего списка в базу
 			}
 		}
-		nl.Write(nl.Path)
+		nl.Write(nl.Path) // пишем базу в файл
 	case "import":
 		path := ""
 		if len(args) < 2 {path = expf} else {path = args[1]}
