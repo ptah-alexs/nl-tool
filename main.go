@@ -113,11 +113,15 @@ Options:
 			}
 			nl.Nodes = []ii.NodeT {}
 			for _, val := range(ks) { // проходим по списку адресов станций нашей базы
-				if *skip_opt { // если включена опция -s,
-					nl.Nodes = append(nl.Nodes, nls[val]) // то пропускаем проверку на ii-шность, и добавляем инстанс из общего списка в базу
-				} else if ii.CheckII(nls[val].Url){ // в противном случае, проверяем что инстанс является станцией ii, тогда
-					nl.Nodes = append(nl.Nodes, nls[val]) // добавляем инстанс из общего списка в базу
+				if !*skip_opt{ // если включена опция -s,
+					if !ii.CheckII(nls[val].Url){ // если проверка на ii-шность провалена
+						tmp := nls[val]
+						tmp.Masked = true // включаем инстанс
+						tmp.AltPath = false // снимаем признак наличия инстанса на других станциях
+						nls[val] = tmp
+					}
 				}
+				nl.Nodes = append(nl.Nodes, nls[val]) // добавляем инстанс из общего списка в базу
 			}
 			nl.Write(nl.Path) // пишем базу в файл
 	case "check":
